@@ -294,7 +294,8 @@ public class TerminalView extends FrameLayout implements FontSizeChangedListener
 			// when copying, highlight the area
 			if (bridge.isSelectingForCopy()) {
 				SelectionArea area = bridge.getSelectionArea();
-				int row = (int) Math.floor(event.getY() / bridge.charHeight);
+				// Account for scrolling offset when calculating row
+				int row = (int) Math.floor(event.getY() / bridge.charHeight) + bridge.buffer.getWindowBase();
 				int col = (int) Math.floor(event.getX() / bridge.charWidth);
 
 				switch (event.getAction()) {

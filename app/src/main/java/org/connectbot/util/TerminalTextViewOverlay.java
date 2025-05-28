@@ -179,8 +179,15 @@ public class TerminalTextViewOverlay extends androidx.appcompat.widget.AppCompat
 		if (event.getAction() == MotionEvent.ACTION_DOWN) {
 			// Selection may be beginning. Sync the TextView with the buffer.
 			refreshTextFromBuffer();
+			// Ensure TextView scroll position matches the terminal window
+			super.scrollTo(0, terminalView.bridge.buffer.getWindowBase() * getLineHeight());
 		} else if (event.getAction() == MotionEvent.ACTION_UP) {
 			super.scrollTo(0, terminalView.bridge.buffer.getWindowBase() * getLineHeight());
+		} else if (event.getAction() == MotionEvent.ACTION_MOVE) {
+			// Keep scroll position synced during selection, but only if actually selecting
+			if (terminalView.bridge.isSelectingForCopy()) {
+				super.scrollTo(0, terminalView.bridge.buffer.getWindowBase() * getLineHeight());
+			}
 		}
 
 		// Mouse input is treated differently:
@@ -234,6 +241,8 @@ public class TerminalTextViewOverlay extends androidx.appcompat.widget.AppCompat
 	 * @return True if the event is handled.
 	 */
 	private boolean onMouseEvent(MotionEvent event, TerminalBridge bridge) {
+		// For mouse position calculation used in terminal mouse reporting,
+		// we need to calculate based on visible area, not the TextView's text position
 		int row = (int) Math.floor(event.getY() / bridge.charHeight);
 		int col = (int) Math.floor(event.getX() / bridge.charWidth);
 		int meta = event.getMetaState();
