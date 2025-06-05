@@ -29,6 +29,8 @@ import org.connectbot.TerminalView;
 import org.connectbot.bean.HostBean;
 import org.connectbot.bean.PortForwardBean;
 import org.connectbot.bean.SelectionArea;
+import org.connectbot.service.terminal.TerminalStateManager;
+import org.connectbot.service.terminal.CoordinateMapper;
 import org.connectbot.transport.AbsTransport;
 import org.connectbot.transport.TransportFactory;
 import org.connectbot.util.HostDatabase;
@@ -100,6 +102,9 @@ public class TerminalBridge implements VDUDisplay {
 	private int columns;
 	private int rows;
 
+	private final TerminalStateManager stateManager;
+	private final CoordinateMapper coordinateMapper;
+
 	private final TerminalKeyListener keyListener;
 
 	private boolean selectingForCopy = false;
@@ -157,6 +162,13 @@ public class TerminalBridge implements VDUDisplay {
 		fontSizeChangedListeners = new ArrayList<>();
 
 		transport = null;
+
+		// Initialize new state management components
+		stateManager = new TerminalStateManager();
+		coordinateMapper = new CoordinateMapper(stateManager);
+		
+		// Set up state change notifications
+		setupStateChangeListeners();
 
 		keyListener = new TerminalKeyListener(null, this, buffer, null);
 	}
@@ -252,11 +264,68 @@ public class TerminalBridge implements VDUDisplay {
 
 		selectionArea = new SelectionArea();
 
+		// Initialize new state management components
+		stateManager = new TerminalStateManager();
+		coordinateMapper = new CoordinateMapper(stateManager);
+		
+		// Set up state change notifications
+		setupStateChangeListeners();
+
 		keyListener = new TerminalKeyListener(manager, this, buffer, host.getEncoding());
 	}
 
 	public PromptHelper getPromptHelper() {
 		return promptHelper;
+	}
+
+	/**
+	 * Get the terminal state manager for atomic state operations
+	 */
+	public TerminalStateManager getStateManager() {
+		return stateManager;
+	}
+
+	/**
+	 * Get the coordinate mapper for coordinate transformations
+	 */
+	public CoordinateMapper getCoordinateMapper() {
+		return coordinateMapper;
+	}
+
+	/**
+	 * Set up state change listeners to handle notifications from TerminalStateManager
+	 */
+	private void setupStateChangeListeners() {
+		stateManager.addStateChangeListener(new TerminalStateManager.StateChangeListener() {
+			@Override
+			public void onDimensionsChanged(TerminalStateManager.TerminalDimensions oldDims, 
+					TerminalStateManager.TerminalDimensions newDims) {
+				Log.d(TAG, String.format("State dimensions changed: %dx%d -> %dx%d", 
+					oldDims.columns, oldDims.rows, newDims.columns, newDims.rows));
+			}
+
+			@Override
+			public void onScrollStateChanged(TerminalStateManager.ScrollState oldState, 
+					TerminalStateManager.ScrollState newState) {
+				Log.d(TAG, String.format("Scroll state changed: windowBase %d -> %d", 
+					oldState.windowBase, newState.windowBase));
+			}
+
+			@Override
+			public void onSelectionChanged(TerminalStateManager.SelectionState oldState, 
+					TerminalStateManager.SelectionState newState) {
+				Log.d(TAG, String.format("Selection state changed: active %b -> %b", 
+					oldState.active, newState.active));
+			}
+
+			@Override
+			public void onRenderStateChanged(TerminalStateManager.RenderState oldState, 
+					TerminalStateManager.RenderState newState) {
+				if (oldState.needsFullRedraw != newState.needsFullRedraw) {
+					fullRedraw = newState.needsFullRedraw;
+				}
+			}
+		});
 	}
 
 	/**
@@ -607,22 +676,41 @@ public class TerminalBridge implements VDUDisplay {
 		ClipboardManager clipboard = (ClipboardManager) parent.getContext().getSystemService(Context.CLIPBOARD_SERVICE);
 		keyListener.setClipboardManager(clipboard);
 
-		if (!forcedSize) {
-			// recalculate buffer size
-			int newColumns, newRows;
+		// Use atomic state transaction for all state changes
+		try {
+			stateManager.executeTransaction(state -> {
+				int newColumns = columns;
+				int newRows = rows;
+				
+				if (!forcedSize) {
+					// recalculate buffer size
+					newColumns = width / charWidth;
+					newRows = height / charHeight;
 
-			newColumns = width / charWidth;
-			newRows = height / charHeight;
+					// If nothing has changed in the terminal dimensions and not an initial
+					// draw then don't blow away scroll regions and such.
+					if (newColumns == columns && newRows == rows) {
+						// No changes needed, but we still need to update pixel dimensions
+						state.setDimensions(width, height, columns, rows, 
+								   (float)charWidth, (float)charHeight, forcedSize);
+						return; // Early return from transaction
+					}
+				}
 
-			// If nothing has changed in the terminal dimensions and not an intial
-			// draw then don't blow away scroll regions and such.
-			if (newColumns == columns && newRows == rows)
-				return;
-
-			columns = newColumns;
-			rows = newRows;
-			refreshOverlayFontSize();
+				// Update state atomically
+				state.setDimensions(width, height, newColumns, newRows, 
+					           (float)charWidth, (float)charHeight, forcedSize);
+				
+				// Update local variables after successful state change
+				columns = newColumns;
+				rows = newRows;
+			});
+		} catch (TerminalStateManager.StateException e) {
+			Log.e(TAG, "Failed to update terminal state during parentChanged", e);
+			return;
 		}
+
+		refreshOverlayFontSize();
 
 		// reallocate new bitmap if needed
 		boolean newBitmap = (bitmap == null);
