@@ -26,6 +26,8 @@
 package de.mud.terminal;
 
 import java.util.Arrays;
+import java.util.concurrent.locks.ReadWriteLock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 /**
  * Implementation of a Video Display Unit (VDU) buffer. This class contains
@@ -42,6 +44,12 @@ public class VDUBuffer {
 
   /** Enable debug messages. */
   public final static int debug = 0;
+
+  /** Thread safety for buffer operations - disabled by default for compatibility */
+  private static boolean ENABLE_THREAD_SAFETY = false;
+  
+  /** ReadWriteLock for thread-safe buffer access */
+  private final ReadWriteLock bufferLock = new ReentrantReadWriteLock();
 
   public int height, width;                          /* rows and columns */
   public boolean[] update;        /* contains the lines that need update */
@@ -164,10 +172,12 @@ public class VDUBuffer {
    */
 
   public void putChar(int c, int l, char ch, long attributes) {
-    charArray[screenBase + l][c] = ch;
-    charAttributes[screenBase + l][c] = attributes;
-    if (l < height)
-      update[l + 1] = true;
+    executeWrite(() -> {
+      charArray[screenBase + l][c] = ch;
+      charAttributes[screenBase + l][c] = attributes;
+      if (l < height)
+        update[l + 1] = true;
+    });
   }
 
   /**
@@ -177,7 +187,7 @@ public class VDUBuffer {
    * @see #putChar
    */
   public char getChar(int c, int l) {
-    return charArray[screenBase + l][c];
+    return executeRead(() -> charArray[screenBase + l][c]);
   }
 
   /**
@@ -187,7 +197,7 @@ public class VDUBuffer {
    * @see #putChar
    */
   public long getAttributes(int c, int l) {
-    return charAttributes[screenBase + l][c];
+    return executeRead(() -> charAttributes[screenBase + l][c]);
   }
 
   /**
@@ -562,7 +572,7 @@ public class VDUBuffer {
    * @param doshow
    */
   public void showCursor(boolean doshow) {
-    showcursor = doshow;
+    executeWrite(() -> showcursor = doshow);
   }
 
   /**
@@ -570,7 +580,7 @@ public class VDUBuffer {
    * @return visibility
    */
   public boolean isCursorVisible() {
-    return showcursor;
+    return executeRead(() -> showcursor);
   }
 
   /**
@@ -579,22 +589,24 @@ public class VDUBuffer {
    * @param l line
    */
   public void setCursorPosition(int c, int l) {
-    cursorX = c;
-    cursorY = l;
+    executeWrite(() -> {
+      cursorX = c;
+      cursorY = l;
+    });
   }
 
   /**
    * Get the current column of the cursor position.
    */
   public int getCursorColumn() {
-    return cursorX;
+    return executeRead(() -> cursorX);
   }
 
   /**
    * Get the current line of the cursor position.
    */
   public int getCursorRow() {
-    return cursorY;
+    return executeRead(() -> cursorY);
   }
 
   /**
@@ -604,12 +616,14 @@ public class VDUBuffer {
    * @see #getBufferSize
    */
   public void setWindowBase(int line) {
-    if (line > screenBase)
-      line = screenBase;
-    else if (line < 0) line = 0;
-    windowBase = line;
-    update[0] = true;
-    redraw();
+    executeWrite(() -> {
+      if (line > screenBase)
+        line = screenBase;
+      else if (line < 0) line = 0;
+      windowBase = line;
+      update[0] = true;
+      redraw();
+    });
   }
 
   /**
@@ -617,7 +631,7 @@ public class VDUBuffer {
    * @see #setWindowBase
    */
   public int getWindowBase() {
-    return windowBase;
+    return executeRead(() -> windowBase);
   }
 
   /**
@@ -818,14 +832,14 @@ public class VDUBuffer {
    * Get amount of rows on the screen.
    */
   public int getRows() {
-    return height;
+    return executeRead(() -> height);
   }
 
   /**
    * Get amount of columns on the screen.
    */
   public int getColumns() {
-    return width;
+    return executeRead(() -> width);
   }
 
   /**
@@ -861,5 +875,53 @@ public class VDUBuffer {
   protected void redraw() {
     if (display != null)
       display.redraw();
+  }
+
+  /**
+   * Enable thread safety for all buffer operations.
+   * This should be called during initialization before any buffer access.
+   */
+  public static void enableThreadSafety(boolean enable) {
+    ENABLE_THREAD_SAFETY = enable;
+  }
+  
+  /**
+   * Check if thread safety is enabled
+   */
+  public static boolean isThreadSafetyEnabled() {
+    return ENABLE_THREAD_SAFETY;
+  }
+  
+  /**
+   * Execute a read operation with appropriate locking
+   */
+  private <T> T executeRead(java.util.function.Supplier<T> operation) {
+    if (!ENABLE_THREAD_SAFETY) {
+      return operation.get();
+    }
+    
+    bufferLock.readLock().lock();
+    try {
+      return operation.get();
+    } finally {
+      bufferLock.readLock().unlock();
+    }
+  }
+  
+  /**
+   * Execute a write operation with appropriate locking
+   */
+  private void executeWrite(Runnable operation) {
+    if (!ENABLE_THREAD_SAFETY) {
+      operation.run();
+      return;
+    }
+    
+    bufferLock.writeLock().lock();
+    try {
+      operation.run();
+    } finally {
+      bufferLock.writeLock().unlock();
+    }
   }
 }
