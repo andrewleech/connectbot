@@ -104,6 +104,7 @@ public class TerminalBridge implements VDUDisplay {
 
 	private final TerminalStateManager stateManager;
 	private final CoordinateMapper coordinateMapper;
+	private final InputHandler inputHandler;
 
 	private final TerminalKeyListener keyListener;
 
@@ -166,6 +167,7 @@ public class TerminalBridge implements VDUDisplay {
 		// Initialize new state management components
 		stateManager = new TerminalStateManager();
 		coordinateMapper = new CoordinateMapper(stateManager);
+		inputHandler = new InputHandler(stateManager, buffer);
 		
 		// Set up state change notifications
 		setupStateChangeListeners();
@@ -267,6 +269,7 @@ public class TerminalBridge implements VDUDisplay {
 		// Initialize new state management components
 		stateManager = new TerminalStateManager();
 		coordinateMapper = new CoordinateMapper(stateManager);
+		inputHandler = new InputHandler(stateManager, buffer);
 		
 		// Set up state change notifications
 		setupStateChangeListeners();
@@ -290,6 +293,13 @@ public class TerminalBridge implements VDUDisplay {
 	 */
 	public CoordinateMapper getCoordinateMapper() {
 		return coordinateMapper;
+	}
+
+	/**
+	 * Get the input handler for context-aware input processing
+	 */
+	public InputHandler getInputHandler() {
+		return inputHandler;
 	}
 
 	/**

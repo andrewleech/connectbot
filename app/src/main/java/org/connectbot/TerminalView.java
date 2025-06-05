@@ -25,6 +25,10 @@ import org.connectbot.bean.SelectionArea;
 import org.connectbot.service.FontSizeChangedListener;
 import org.connectbot.service.TerminalBridge;
 import org.connectbot.service.TerminalKeyListener;
+import org.connectbot.service.terminal.CoordinateMapper;
+import org.connectbot.service.terminal.GestureHandler;
+import org.connectbot.service.terminal.InputHandler;
+import org.connectbot.service.terminal.TerminalStateManager;
 import org.connectbot.util.PreferenceConstants;
 import org.connectbot.util.TerminalTextViewOverlay;
 import org.connectbot.util.TerminalViewPager;
@@ -79,6 +83,7 @@ public class TerminalView extends FrameLayout implements FontSizeChangedListener
 	private final TerminalTextViewOverlay terminalTextViewOverlay;
 	public final TerminalViewPager viewPager;
 	private final GestureDetector gestureDetector;
+	private final GestureHandler arrowGestureHandler;
 	private final SharedPreferences prefs;
 
 	// These are only used for pre-Honeycomb copying.
@@ -269,6 +274,14 @@ public class TerminalView extends FrameLayout implements FontSizeChangedListener
 			}
 		});
 
+		// Initialize arrow gesture handler for gesture-based input
+		arrowGestureHandler = new GestureHandler(
+			bridge.getStateManager(),
+			bridge.getCoordinateMapper(),
+			bridge.getInputHandler()
+		);
+		setupGestureHandlerListeners();
+
 		// Enable accessibility features if a screen reader is active.
 		new AccessibilityStateTester().execute((Void) null);
 	}
@@ -285,6 +298,15 @@ public class TerminalView extends FrameLayout implements FontSizeChangedListener
 
 	@Override
 	public boolean onTouchEvent(MotionEvent event) {
+		// First, check for arrow gestures if enabled
+		if (arrowGestureHandler != null && arrowGestureHandler.isArrowGestureEnabled()) {
+			GestureHandler.GestureResult gestureResult = arrowGestureHandler.onTouchEvent(event);
+			if (gestureResult.consumed) {
+				return true;
+			}
+		}
+
+		// Then handle standard gestures
 		if (gestureDetector != null && gestureDetector.onTouchEvent(event)) {
 			return true;
 		}
@@ -293,74 +315,132 @@ public class TerminalView extends FrameLayout implements FontSizeChangedListener
 		if (terminalTextViewOverlay == null) {
 			// when copying, highlight the area
 			if (bridge.isSelectingForCopy()) {
-				SelectionArea area = bridge.getSelectionArea();
-				int row = (int) Math.floor(event.getY() / bridge.charHeight);
-				int col = (int) Math.floor(event.getX() / bridge.charWidth);
-
-				switch (event.getAction()) {
-				case MotionEvent.ACTION_DOWN:
-					// recording starting area
-					viewPager.setPagingEnabled(false);
-					if (area.isSelectingOrigin()) {
-						area.setRow(row);
-						area.setColumn(col);
-						lastTouchedRow = row;
-						lastTouchedCol = col;
-						bridge.redraw();
-					}
-					return true;
-				case MotionEvent.ACTION_MOVE:
-							/* ignore when user hasn't moved since last time so
-							 * we can fine-tune with directional pad
-							 */
-					if (row == lastTouchedRow && col == lastTouchedCol)
-						return true;
-
-					// if the user moves, start the selection for other corner
-					area.finishSelectingOrigin();
-
-					// update selected area
-					area.setRow(row);
-					area.setColumn(col);
-					lastTouchedRow = row;
-					lastTouchedCol = col;
-					bridge.redraw();
-					return true;
-				case MotionEvent.ACTION_UP:
-							/* If they didn't move their finger, maybe they meant to
-							 * select the rest of the text with the directional pad.
-							 */
-					if (area.getLeft() == area.getRight() &&
-							area.getTop() == area.getBottom()) {
-						return true;
-					}
-
-					// copy selected area to clipboard
-					String copiedText = area.copyFrom(bridge.buffer);
-
-					clipboard.setText(copiedText);
-					Toast.makeText(
-							context,
-							context.getResources().getQuantityString(R.plurals.console_copy_done,
-									copiedText.length(), copiedText.length()),
-							Toast.LENGTH_LONG).show();
-
-					// fall through to clear state
-
-				case MotionEvent.ACTION_CANCEL:
-					// make sure we clear any highlighted area
-					area.reset();
-					bridge.setSelectingForCopy(false);
-					bridge.redraw();
-					viewPager.setPagingEnabled(true);
-					return true;
-				}
+				return handleSelectionTouch(event);
 			}
 
 			return true;
 		}
 
 		return super.onTouchEvent(event);
+	}
+
+	/**
+	 * Handle touch events for text selection using coordinate mapping
+	 */
+	private boolean handleSelectionTouch(MotionEvent event) {
+		SelectionArea area = bridge.getSelectionArea();
+		CoordinateMapper mapper = bridge.getCoordinateMapper();
+		
+		// Convert pixel coordinates to character coordinates with bounds checking
+		CoordinateMapper.PixelPoint pixelPoint = new CoordinateMapper.PixelPoint(event.getX(), event.getY());
+		CoordinateMapper.CharPoint charPoint = mapper.pixelToCharacter(pixelPoint);
+		
+		// Validate coordinates are within terminal bounds
+		if (!mapper.isValidCharacter(charPoint)) {
+			// Touch is outside valid terminal area - ignore or clamp to bounds
+			TerminalStateManager.TerminalDimensions dims = bridge.getStateManager().getDimensions();
+			charPoint = new CoordinateMapper.CharPoint(
+				Math.max(0, Math.min(charPoint.column, dims.columns - 1)),
+				Math.max(0, Math.min(charPoint.row, dims.rows - 1))
+			);
+		}
+		
+		int row = charPoint.row;
+		int col = charPoint.column;
+
+		switch (event.getAction()) {
+		case MotionEvent.ACTION_DOWN:
+			// recording starting area
+			viewPager.setPagingEnabled(false);
+			if (area.isSelectingOrigin()) {
+				area.setRow(row);
+				area.setColumn(col);
+				lastTouchedRow = row;
+				lastTouchedCol = col;
+				bridge.redraw();
+			}
+			return true;
+			
+		case MotionEvent.ACTION_MOVE:
+			/* ignore when user hasn't moved since last time so
+			 * we can fine-tune with directional pad
+			 */
+			if (row == lastTouchedRow && col == lastTouchedCol)
+				return true;
+
+			// if the user moves, start the selection for other corner
+			area.finishSelectingOrigin();
+
+			// update selected area
+			area.setRow(row);
+			area.setColumn(col);
+			lastTouchedRow = row;
+			lastTouchedCol = col;
+			bridge.redraw();
+			return true;
+			
+		case MotionEvent.ACTION_UP:
+			/* If they didn't move their finger, maybe they meant to
+			 * select the rest of the text with the directional pad.
+			 */
+			if (area.getLeft() == area.getRight() &&
+					area.getTop() == area.getBottom()) {
+				return true;
+			}
+
+			// copy selected area to clipboard
+			String copiedText = area.copyFrom(bridge.buffer);
+
+			clipboard.setText(copiedText);
+			Toast.makeText(
+					context,
+					context.getResources().getQuantityString(R.plurals.console_copy_done,
+							copiedText.length(), copiedText.length()),
+					Toast.LENGTH_LONG).show();
+
+			// fall through to clear state
+
+		case MotionEvent.ACTION_CANCEL:
+			// make sure we clear any highlighted area
+			area.reset();
+			bridge.setSelectingForCopy(false);
+			bridge.redraw();
+			viewPager.setPagingEnabled(true);
+			return true;
+		}
+		
+		return true;
+	}
+
+	/**
+	 * Set up gesture handler listeners for arrow key gestures
+	 */
+	private void setupGestureHandlerListeners() {
+		arrowGestureHandler.setGestureListener(new GestureHandler.GestureListener() {
+			@Override
+			public void onGestureDetected(GestureHandler.GestureState gesture, 
+					CoordinateMapper.PixelPoint location) {
+				// Log gesture detection for debugging
+				// Log.d("TerminalView", "Gesture detected: " + gesture + " at " + location);
+			}
+
+			@Override
+			public void onGestureComplete(GestureHandler.GestureState gesture, boolean success) {
+				// Handle gesture completion if needed
+				if (!success) {
+					// Could show user feedback for failed gestures
+				}
+			}
+
+			@Override
+			public void onArrowKeyGesture(InputHandler.ArrowDirection direction, 
+					CoordinateMapper.PixelPoint location) {
+				// Provide haptic feedback for arrow gestures if enabled in preferences
+				if (prefs.getBoolean(PreferenceConstants.HAPTIC_FEEDBACK, true)) {
+					performHapticFeedback(View.HAPTIC_FEEDBACK_VIRTUAL_KEY);
+				}
+			}
+		});
 	}
 
 	@Override
