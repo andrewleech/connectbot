@@ -31,6 +31,7 @@ import org.connectbot.bean.PortForwardBean;
 import org.connectbot.bean.SelectionArea;
 import org.connectbot.service.terminal.TerminalStateManager;
 import org.connectbot.service.terminal.CoordinateMapper;
+import org.connectbot.service.terminal.SelectionManager;
 import org.connectbot.transport.AbsTransport;
 import org.connectbot.transport.TransportFactory;
 import org.connectbot.util.HostDatabase;
@@ -105,6 +106,7 @@ public class TerminalBridge implements VDUDisplay {
 	private final TerminalStateManager stateManager;
 	private final CoordinateMapper coordinateMapper;
 	private final InputHandler inputHandler;
+	private final SelectionManager selectionManager;
 
 	private final TerminalKeyListener keyListener;
 
@@ -168,6 +170,7 @@ public class TerminalBridge implements VDUDisplay {
 		stateManager = new TerminalStateManager();
 		coordinateMapper = new CoordinateMapper(stateManager);
 		inputHandler = new InputHandler(stateManager, buffer);
+		selectionManager = new SelectionManager(stateManager, coordinateMapper, buffer);
 		
 		// Set up state change notifications
 		setupStateChangeListeners();
@@ -270,6 +273,7 @@ public class TerminalBridge implements VDUDisplay {
 		stateManager = new TerminalStateManager();
 		coordinateMapper = new CoordinateMapper(stateManager);
 		inputHandler = new InputHandler(stateManager, buffer);
+		selectionManager = new SelectionManager(stateManager, coordinateMapper, buffer);
 		
 		// Set up state change notifications
 		setupStateChangeListeners();
@@ -300,6 +304,13 @@ public class TerminalBridge implements VDUDisplay {
 	 */
 	public InputHandler getInputHandler() {
 		return inputHandler;
+	}
+
+	/**
+	 * Get the selection manager for text selection operations
+	 */
+	public SelectionManager getSelectionManager() {
+		return selectionManager;
 	}
 
 	/**
