@@ -54,6 +54,14 @@ public class TerminalTextViewOverlay extends androidx.appcompat.widget.AppCompat
 
 	private int oldBufferHeight = 0;
 	private int oldScrollY = -1;
+	
+	// Gesture detection for preventing accidental selection during scroll
+	private float initialTouchX = 0;
+	private float initialTouchY = 0;
+	private long touchDownTime = 0;
+	private boolean isPotentialScroll = false;
+	private static final int SCROLL_THRESHOLD = 20; // pixels
+	private static final long LONG_PRESS_TIMEOUT = 500; // milliseconds
 
 	public TerminalTextViewOverlay(Context context, TerminalView terminalView) {
 		super(context);
@@ -244,18 +252,38 @@ public class TerminalTextViewOverlay extends androidx.appcompat.widget.AppCompat
 
 	@Override
 	public boolean onTouchEvent(MotionEvent event) {
-		if (event.getAction() == MotionEvent.ACTION_DOWN) {
-			// Selection may be beginning. Sync the TextView with the buffer.
-			refreshTextFromBuffer();
-		} else if (event.getAction() == MotionEvent.ACTION_UP) {
-			TerminalFeatureFlags flags = TerminalFeatureFlags.getInstance();
-			if (flags != null && flags.isNewSelectionManagerEnabled()) {
-				// With new coordinate system, TextView scroll should stay at 0
-				super.scrollTo(0, 0);
-			} else {
-				// Legacy behavior
-				super.scrollTo(0, terminalView.bridge.buffer.getWindowBase() * getLineHeight());
-			}
+		switch (event.getAction()) {
+			case MotionEvent.ACTION_DOWN:
+				initialTouchX = event.getX();
+				initialTouchY = event.getY();
+				touchDownTime = System.currentTimeMillis();
+				isPotentialScroll = false;
+				
+				// Selection may be beginning. Sync the TextView with the buffer.
+				refreshTextFromBuffer();
+				break;
+				
+			case MotionEvent.ACTION_MOVE:
+				float deltaX = Math.abs(event.getX() - initialTouchX);
+				float deltaY = Math.abs(event.getY() - initialTouchY);
+				long touchDuration = System.currentTimeMillis() - touchDownTime;
+				
+				// Detect scroll: significant movement in short time (< 200ms)
+				if ((deltaX > SCROLL_THRESHOLD || deltaY > SCROLL_THRESHOLD) && touchDuration < 200) {
+					isPotentialScroll = true;
+				}
+				break;
+				
+			case MotionEvent.ACTION_UP:
+				TerminalFeatureFlags flags = TerminalFeatureFlags.getInstance();
+				if (flags != null && flags.isNewSelectionManagerEnabled()) {
+					// With new coordinate system, TextView scroll should stay at 0
+					super.scrollTo(0, 0);
+				} else {
+					// Legacy behavior
+					super.scrollTo(0, terminalView.bridge.buffer.getWindowBase() * getLineHeight());
+				}
+				break;
 		}
 
 		// Mouse input is treated differently:
@@ -266,9 +294,15 @@ public class TerminalTextViewOverlay extends androidx.appcompat.widget.AppCompat
 			}
 			terminalView.viewPager.setPagingEnabled(true);
 		} else {
+			// Let TerminalView handle scrolling gestures first
 			if (terminalView.onTouchEvent(event)) {
 				return true;
 			}
+		}
+
+		// Prevent text selection on quick scroll gestures
+		if (isPotentialScroll) {
+			return false;
 		}
 
 		return super.onTouchEvent(event);
