@@ -33,6 +33,7 @@ import org.connectbot.service.terminal.TerminalStateManager;
 import org.connectbot.service.terminal.CoordinateMapper;
 import org.connectbot.service.terminal.InputHandler;
 import org.connectbot.service.terminal.SelectionManager;
+import org.connectbot.service.terminal.TerminalFeatureFlags;
 import org.connectbot.transport.AbsTransport;
 import org.connectbot.transport.TransportFactory;
 import org.connectbot.util.HostDatabase;
@@ -124,6 +125,10 @@ public class TerminalBridge implements VDUDisplay {
 
 	private final List<String> localOutput;
 
+	// Track last logged dimensions to reduce verbose logging during zoom
+	private int lastLoggedColumns = -1;
+	private int lastLoggedRows = -1;
+
 	/**
 	 * Flag indicating if we should perform a full-screen redraw during our next
 	 * rendering pass.
@@ -172,6 +177,12 @@ public class TerminalBridge implements VDUDisplay {
 		coordinateMapper = new CoordinateMapper(stateManager);
 		inputHandler = new InputHandler(stateManager, buffer);
 		selectionManager = new SelectionManager(stateManager, coordinateMapper, buffer);
+		
+		// Enable all phases since implementation is complete and tested
+		if (manager != null) {
+			TerminalFeatureFlags.initialize(manager.getApplicationContext());
+			TerminalFeatureFlags.getInstance().enablePhase(5);
+		}
 		
 		// Set up state change notifications
 		setupStateChangeListeners();
@@ -276,6 +287,12 @@ public class TerminalBridge implements VDUDisplay {
 		inputHandler = new InputHandler(stateManager, buffer);
 		selectionManager = new SelectionManager(stateManager, coordinateMapper, buffer);
 		
+		// Enable all phases since implementation is complete and tested
+		if (manager != null) {
+			TerminalFeatureFlags.initialize(manager.getApplicationContext());
+			TerminalFeatureFlags.getInstance().enablePhase(5);
+		}
+		
 		// Set up state change notifications
 		setupStateChangeListeners();
 
@@ -322,8 +339,13 @@ public class TerminalBridge implements VDUDisplay {
 			@Override
 			public void onDimensionsChanged(TerminalStateManager.TerminalDimensions oldDims, 
 					TerminalStateManager.TerminalDimensions newDims) {
-				Log.d(TAG, String.format("State dimensions changed: %dx%d -> %dx%d", 
-					oldDims.columns, oldDims.rows, newDims.columns, newDims.rows));
+				// Only log significant dimension changes (not minor adjustments during zoom)
+				boolean significantChange = Math.abs(oldDims.columns - newDims.columns) > 2 || 
+											Math.abs(oldDims.rows - newDims.rows) > 2;
+				if (significantChange) {
+					Log.d(TAG, String.format("State dimensions changed: %dx%d -> %dx%d", 
+						oldDims.columns, oldDims.rows, newDims.columns, newDims.rows));
+				}
 			}
 
 			@Override
@@ -790,7 +812,12 @@ public class TerminalBridge implements VDUDisplay {
 
 		parent.notifyUser(String.format("%d x %d", columns, rows));
 
-		Log.i(TAG, String.format("parentChanged() now width=%d, height=%d", columns, rows));
+		// Log only when there's a significant change in terminal dimensions
+		if (Math.abs(columns - lastLoggedColumns) > 2 || Math.abs(rows - lastLoggedRows) > 2) {
+			Log.i(TAG, String.format("parentChanged() now width=%d, height=%d", columns, rows));
+			lastLoggedColumns = columns;
+			lastLoggedRows = rows;
+		}
 	}
 
 	/**
