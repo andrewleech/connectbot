@@ -20,6 +20,7 @@ package org.connectbot.util;
 import org.connectbot.R;
 import org.connectbot.TerminalView;
 import org.connectbot.service.TerminalBridge;
+import org.connectbot.service.terminal.TerminalFeatureFlags;
 
 import android.content.Context;
 import android.graphics.Color;
@@ -68,6 +69,56 @@ public class TerminalTextViewOverlay extends androidx.appcompat.widget.AppCompat
 
 	public void refreshTextFromBuffer() {
 		VDUBuffer vb = terminalView.bridge.getVDUBuffer();
+		
+		// Check if new coordinate system is enabled
+		TerminalFeatureFlags flags = TerminalFeatureFlags.getInstance();
+		if (flags != null && flags.isNewSelectionManagerEnabled()) {
+			// Use new coordinate-aware approach
+			refreshTextFromBufferNew(vb);
+		} else {
+			// Use legacy approach
+			refreshTextFromBufferLegacy(vb);
+		}
+	}
+	
+	private void refreshTextFromBufferNew(VDUBuffer vb) {
+		// Get only the visible portion of the buffer to ensure coordinate alignment
+		int windowBase = vb.getWindowBase();
+		int screenRows = vb.getRows();
+		int numCols = vb.getColumns();
+		int bufferSize = vb.getBufferSize();
+		
+		// Calculate the actual range to display
+		int startRow = Math.max(0, windowBase);
+		int endRow = Math.min(bufferSize, windowBase + screenRows);
+		
+		StringBuilder buffer = new StringBuilder();
+		int previousTotalLength = 0;
+
+		// Only include the visible portion in the TextView
+		for (int r = startRow; r < endRow && vb.charArray[r] != null; r++) {
+			for (int c = 0; c < numCols; c++) {
+				buffer.append(vb.charArray[r][c]);
+			}
+
+			// Truncate trailing whitespace
+			while (buffer.length() > previousTotalLength &&
+					Character.isWhitespace(buffer.charAt(buffer.length() - 1))) {
+				buffer.setLength(buffer.length() - 1);
+			}
+
+			buffer.append('\n');
+			previousTotalLength = buffer.length();
+		}
+
+		// Since we're only showing the visible portion, scroll position should be 0
+		oldScrollY = 0;
+		oldBufferHeight = endRow - startRow;
+
+		setText(buffer);
+	}
+	
+	private void refreshTextFromBufferLegacy(VDUBuffer vb) {
 		int numRows = vb.getBufferSize();
 		int numCols = vb.getColumns();
 		oldBufferHeight = numRows;
@@ -103,6 +154,17 @@ public class TerminalTextViewOverlay extends androidx.appcompat.widget.AppCompat
 	 * rest of the buffer.
 	 */
 	public void onBufferChanged() {
+		TerminalFeatureFlags flags = TerminalFeatureFlags.getInstance();
+		if (flags != null && flags.isNewSelectionManagerEnabled()) {
+			// With new coordinate system, just refresh the entire visible portion
+			refreshTextFromBuffer();
+		} else {
+			// Legacy behavior
+			onBufferChangedLegacy();
+		}
+	}
+	
+	private void onBufferChangedLegacy() {
 		VDUBuffer vb = terminalView.bridge.getVDUBuffer();
 		int numRows = vb.getBufferSize();
 		int numNewRows = numRows - oldBufferHeight;
@@ -166,12 +228,18 @@ public class TerminalTextViewOverlay extends androidx.appcompat.widget.AppCompat
 
 	@Override
 	public void scrollTo(int x, int y) {
-		int lineMultiple = (y * 2 + 1) / (getLineHeight() * 2);
-
-		TerminalBridge bridge = terminalView.bridge;
-		bridge.buffer.setWindowBase(lineMultiple);
-
-		super.scrollTo(0, y);
+		TerminalFeatureFlags flags = TerminalFeatureFlags.getInstance();
+		if (flags != null && flags.isNewSelectionManagerEnabled()) {
+			// With new coordinate system, the TextView only contains visible content
+			// so we don't need to adjust the buffer window base
+			super.scrollTo(0, y);
+		} else {
+			// Legacy behavior
+			int lineMultiple = (y * 2 + 1) / (getLineHeight() * 2);
+			TerminalBridge bridge = terminalView.bridge;
+			bridge.buffer.setWindowBase(lineMultiple);
+			super.scrollTo(0, y);
+		}
 	}
 
 	@Override
@@ -180,7 +248,14 @@ public class TerminalTextViewOverlay extends androidx.appcompat.widget.AppCompat
 			// Selection may be beginning. Sync the TextView with the buffer.
 			refreshTextFromBuffer();
 		} else if (event.getAction() == MotionEvent.ACTION_UP) {
-			super.scrollTo(0, terminalView.bridge.buffer.getWindowBase() * getLineHeight());
+			TerminalFeatureFlags flags = TerminalFeatureFlags.getInstance();
+			if (flags != null && flags.isNewSelectionManagerEnabled()) {
+				// With new coordinate system, TextView scroll should stay at 0
+				super.scrollTo(0, 0);
+			} else {
+				// Legacy behavior
+				super.scrollTo(0, terminalView.bridge.buffer.getWindowBase() * getLineHeight());
+			}
 		}
 
 		// Mouse input is treated differently:
