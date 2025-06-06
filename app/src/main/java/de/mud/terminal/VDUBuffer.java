@@ -617,10 +617,11 @@ public class VDUBuffer {
    */
   public void setWindowBase(int line) {
     executeWrite(() -> {
-      if (line > screenBase)
-        line = screenBase;
-      else if (line < 0) line = 0;
-      windowBase = line;
+      int finalLine = line;
+      if (finalLine > screenBase)
+        finalLine = screenBase;
+      else if (finalLine < 0) finalLine = 0;
+      windowBase = finalLine;
       update[0] = true;
       redraw();
     });
