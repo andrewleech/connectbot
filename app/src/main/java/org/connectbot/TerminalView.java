@@ -437,7 +437,7 @@ public class TerminalView extends FrameLayout implements FontSizeChangedListener
 					CoordinateMapper.PixelPoint location) {
 				// Provide haptic feedback for arrow gestures if enabled in preferences
 				if (prefs.getBoolean(PreferenceConstants.HAPTIC_FEEDBACK, true)) {
-					performHapticFeedback(View.HAPTIC_FEEDBACK_VIRTUAL_KEY);
+					performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY);
 				}
 			}
 		});

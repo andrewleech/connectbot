@@ -284,9 +284,9 @@ public class InputHandler {
     private void resetScrollPosition(InputContext context) {
         stateManager.executeTransaction(state -> {
             // Reset window base to show the bottom of the buffer
-            int bufferSize = state.getBufferSize();
-            int rows = state.getRows();
-            int newWindowBase = Math.max(0, bufferSize - rows);
+            TerminalStateManager.ScrollState scrollState = stateManager.getScrollState();
+            TerminalStateManager.TerminalDimensions dims = stateManager.getDimensions();
+            int newWindowBase = Math.max(0, scrollState.bufferSize - dims.rows);
             state.setWindowBase(newWindowBase);
         });
     }

@@ -31,6 +31,7 @@ import org.connectbot.bean.PortForwardBean;
 import org.connectbot.bean.SelectionArea;
 import org.connectbot.service.terminal.TerminalStateManager;
 import org.connectbot.service.terminal.CoordinateMapper;
+import org.connectbot.service.terminal.InputHandler;
 import org.connectbot.service.terminal.SelectionManager;
 import org.connectbot.transport.AbsTransport;
 import org.connectbot.transport.TransportFactory;

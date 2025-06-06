@@ -194,7 +194,7 @@ public class SynchronizedBufferAccess {
                 buffer.getColumns(),
                 buffer.getRows(),
                 buffer.getWindowBase(),
-                buffer.getScreenBase(),
+                buffer.screenBase,
                 buffer.getBufferSize()
             )
         );
